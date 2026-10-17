@@ -87,3 +87,5 @@ guesses the name can confirm it), `[private] patterns` (words that are not secre
 The only copy that counts is this GitHub repo. A mirror on another server is read only.
 
 `tools/test` is the one command CI also runs. A skipped test counts as a failure.
+
+To release: add the version's section to `CHANGELOG.md`, bump `VERSION`, merge, then push a `vX.Y.Z` tag. The release workflow checks the tag against `VERSION`, runs the tests and publishes the release page with that section as its notes.

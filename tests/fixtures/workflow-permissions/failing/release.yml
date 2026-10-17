@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.*"
+
+permissions:
+  contents: write
+
+jobs:
+  # First, before anything is built or published: every file that repeats the version must match the tag.
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .agent-checks/bin/agent-checks release-version "$GITHUB_REF_NAME"
+
+  test:
+    needs: gate
+    uses: ./.github/workflows/ci.yml
+
+  notes:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release notes from the changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          {
+            scripts/release-notes.sh "$version"
+            echo
+            echo "Install steps are in the [readme](https://github.com/${GITHUB_REPOSITORY}#install). The Windows and macOS builds are unsigned, so both warn the first time you open them. The readme says what to click and which Mac file is yours."
+          } > release-notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+
+  windows:
+    needs: [test, notes]
+    uses: ./.github/workflows/windows.yml
+
+  windows-publish:
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: App-windows.exe
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: App-windows.exe
+
+  macos:
+    needs: [test, notes]
+    uses: ./.github/workflows/macos.yml
+
+  macos-publish:
+    needs: macos
+    runs-on: ubuntu-latest
+    steps:
+      # Both disk images: App-macos.dmg for Apple silicon, App-macos-intel.dmg for Intel.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: App-macos*.dmg
+          merge-multiple: true
+      - run: ls -l App-macos.dmg App-macos-intel.dmg
+      - uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          files: |
+            App-macos.dmg
+            App-macos-intel.dmg
+
+  flatpak:
+    needs: [test, notes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:kde-6.10
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: app.flatpak
+          manifest-path: packaging/flatpak/org.example.App.yml
+          cache-key: flatpak-kde-6.10
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: app.flatpak
+
+  # Last: the release page must hold all four files. A tag that ends with a page missing one is not a release.
+  verify:
+    needs: [windows-publish, macos-publish, flatpak]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .agent-checks/bin/agent-checks release-assets "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" App-windows.exe App-macos.dmg App-macos-intel.dmg app.flatpak
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

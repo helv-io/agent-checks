@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: "41 6 * * 1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: System libraries for Qt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libdbus-1-3 libxkbcommon0 libfontconfig1 libnss3
+          sudo apt-get install -y libglib2.0-0t64 || sudo apt-get install -y libglib2.0-0
+      - name: Install
+        run: pip install -e .
+      - name: Test
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -q
+
+  # One door for web requests (ruff TID251 in pyproject.toml).
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.17.1
+      - run: ruff check .
+
+  # Every build target can install the dependencies from ready-made wheels (the Intel Mac build failed three times on one that had none).
+  wheels:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python scripts/check-wheels.py
+
+  # A new release of a dependency can break a build with nobody pushing anything. Say so in an issue.
+  alert:
+    name: Open an issue when the weekly run fails
+    if: ${{ always() && github.event_name == 'schedule' }}
+    needs: [test, lint, wheels]
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .agent-checks/bin/agent-checks nightly-alert "${{ contains(needs.*.result, 'failure') && 'fail' || 'ok' }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

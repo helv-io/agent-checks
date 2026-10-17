@@ -266,6 +266,100 @@ class Workflows(unittest.TestCase):
         self.assertEqual(r.run("actionlint")[0], 0)
 
 
+FIXTURES = os.path.join(ROOT, "tests", "fixtures", "workflow-permissions")
+
+
+def fixture_flows(kind):
+    """The real v0.5.5 release workflow pair of a shipped app (names made neutral), as a repo's .github/workflows files."""
+    out = {}
+    for name in os.listdir(os.path.join(FIXTURES, kind)):
+        with open(os.path.join(FIXTURES, kind, name), encoding="utf-8") as f:
+            out[f".github/workflows/{name}"] = f.read()
+    return out
+
+
+CALLEE = "name: ci\non:\n  workflow_call:\njobs:\n  alert:\n    runs-on: ubuntu-latest\n    permissions:\n      issues: write\n    steps:\n      - run: echo hi\n"
+
+
+def caller(extra="", top="permissions:\n  contents: write\n"):
+    return f"name: rel\non:\n  push:\n{top}jobs:\n  test:\n    uses: ./.github/workflows/ci.yml\n{extra}"
+
+
+class WorkflowPermissions(unittest.TestCase):
+    def test_the_release_that_never_started_is_caught_and_named(self):
+        r = Repo(); r.commit(fixture_flows("failing"))
+        code, out = r.run("workflow-permissions")
+        self.assertEqual(code, 1)
+        for word in (".github/workflows/release.yml", "job 'test'", ".github/workflows/ci.yml", "job 'alert'", "issues: write", "startup_failure", "Fix:"):
+            self.assertIn(word, out)
+        self.assertEqual(out.count("startup_failure"), 1)  # one finding for the one broken call
+
+    def test_actionlint_does_not_see_it(self):
+        r = Repo(); r.commit(fixture_flows("failing"))
+        self.assertEqual(r.run("actionlint")[0], 0)
+
+    def test_the_fixed_release_passes(self):
+        r = Repo(); r.commit(fixture_flows("fixed"))
+        self.assertEqual(r.run("workflow-permissions")[0], 0)
+
+    def test_it_runs_with_the_other_checks_in_local_and_ci(self):
+        r = Repo(); r.commit(fixture_flows("failing"))
+        code, out = r.run("local", "HEAD")
+        self.assertEqual(code, 1); self.assertIn("FAIL workflow permissions", out)
+        r.commit(fixture_flows("fixed"))
+        self.assertIn("ok   workflow permissions", r.run("local", "HEAD")[1])
+
+    def test_ways_to_hold_the_permission(self):
+        for label, files in {
+            "job block": {"rel.yml": caller("    permissions:\n      issues: write\n"), "ci.yml": CALLEE},
+            "flow block": {"rel.yml": caller("    permissions: { issues: write, contents: read }\n"), "ci.yml": CALLEE},
+            "workflow level": {"rel.yml": caller(top="permissions:\n  issues: write\n"), "ci.yml": CALLEE},
+            "write-all": {"rel.yml": caller(top="permissions: write-all\n"), "ci.yml": CALLEE},
+            "callee asks only read": {"rel.yml": caller(top="permissions:\n  issues: read\n"), "ci.yml": CALLEE.replace("issues: write", "issues: read")},
+            "callee sets nothing": {"rel.yml": caller(), "ci.yml": CALLEE.replace("    permissions:\n      issues: write\n", "")},
+            "other repo's workflow": {"rel.yml": caller().replace("./.github/workflows/ci.yml", "acme/shared/.github/workflows/ci.yml@v1")},
+        }.items():
+            with self.subTest(label):
+                r = Repo(); r.commit({f".github/workflows/{n}": b for n, b in files.items()})
+                code, out = r.run("workflow-permissions"); self.assertEqual(code, 0, out)
+
+    def test_ways_to_miss_it(self):
+        for label, files in {
+            "write-all in the callee": {"rel.yml": caller(), "ci.yml": CALLEE.replace("    permissions:\n      issues: write\n", "").replace("jobs:", "permissions: write-all\njobs:")},
+            "caller holds read": {"rel.yml": caller("    permissions:\n      issues: read\n"), "ci.yml": CALLEE},
+            "caller holds nothing": {"rel.yml": caller("    permissions: {}\n"), "ci.yml": CALLEE},
+            "nothing set anywhere on the caller": {"rel.yml": caller(top=""), "ci.yml": CALLEE},
+            "two levels down": {"rel.yml": caller("    permissions:\n      contents: read\n"),
+                                "ci.yml": "name: ci\non:\n  workflow_call:\njobs:\n  inner:\n    uses: ./.github/workflows/leaf.yml\n    permissions:\n      contents: read\n",
+                                "leaf.yml": CALLEE.replace("issues: write", "pages: write")},
+        }.items():
+            with self.subTest(label):
+                r = Repo(); r.commit({f".github/workflows/{n}": b for n, b in files.items()})
+                code, out = r.run("workflow-permissions"); self.assertEqual(code, 1, out)
+
+    def test_the_repo_default_can_be_declared(self):
+        files = {".github/workflows/rel.yml": caller(top=""), ".github/workflows/ci.yml": CALLEE.replace("issues: write", "issues: read")}
+        r = Repo(); r.commit(dict(files, **{".agent-checks.toml": '[workflow-permissions]\ndefault = "write"\n'}))
+        self.assertEqual(r.run("workflow-permissions")[0], 0)
+        r.commit({".agent-checks.toml": '[workflow-permissions]\ndefault = "maybe"\n'})
+        self.assertEqual(r.run("workflow-permissions")[0], 2)
+
+    def test_text_that_looks_like_a_key_is_not_one(self):
+        text = caller("    permissions:\n      issues: write\n").replace("on:\n", "on:\n  workflow_dispatch:\n")
+        other = "name: o\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - name: x\n        run: |\n          echo 'permissions:'\n          echo 'uses: ./.github/workflows/ci.yml'\n      - uses: actions/checkout@v4\n"
+        r = Repo(); r.commit({".github/workflows/rel.yml": text, ".github/workflows/ci.yml": CALLEE, ".github/workflows/o.yml": other})
+        self.assertEqual(r.run("workflow-permissions")[0], 0)
+
+    def test_what_it_cannot_read_is_reported_not_passed(self):
+        r = Repo(); r.commit({".github/workflows/rel.yml": caller("    permissions:\n      issues: sometimes\n"), ".github/workflows/ci.yml": CALLEE})
+        code, out = r.run("workflow-permissions")
+        self.assertEqual(code, 1); self.assertIn("sometimes", out)
+
+    def test_a_repo_without_workflows_passes(self):
+        r = Repo(); r.commit({"a": "1"})
+        self.assertEqual(r.run("workflow-permissions")[0], 0)
+
+
 class Vendored(unittest.TestCase):
     def test_vendored_copy_verifies_and_a_hand_edit_is_caught(self):
         # tools/vendor always clones its source (GitHub by default); the test points it at a local clone of HEAD

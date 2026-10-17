@@ -19,6 +19,7 @@ Each check says what is wrong and how to fix it, so an agent can repair its own 
 | `nightly-alert` | A scheduled run that fails with nobody watching: opens one issue, closes it when green again | last job of scheduled workflows |
 | `no-skips` | A test run that is green only because tests were skipped | the repo's one test command |
 | `verify` | A hand-edited copy of these checks inside a repo | first step of the job |
+| `workflow-permissions` | A workflow that calls another workflow of the same repo needs the permissions that one asks for. A miss makes GitHub refuse to start the whole run, with no jobs and no log (hearth's v0.5.5 release stayed empty). actionlint does not know this rule | every pull request and push |
 | `actionlint` | A broken workflow file (the ha-supergrok nightly was red for six weeks) | every pull request and push |
 
 Every check was written for a real past mistake and `tests/test_checks.py` proves it on that mistake and on the fixed version.
@@ -66,6 +67,9 @@ why = "the fixture needs a realistic name"
 [[release.version]]                                  # every file that repeats the version, one capture group each
 file = "internal/config/config.go"
 pattern = 'const Version = "([^"]+)"'
+
+[workflow-permissions]
+default = "read"                                     # what a workflow gets when nothing sets permissions: the repo's default token ("read" or "write")
 
 [no-skips]
 allow = ["^SKIPPED .* Windows only"]

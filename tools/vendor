@@ -1,0 +1,23 @@
+#!/bin/bash
+# Copy the shared checks into one or more repos as .agent-checks/ (the pinned copy CI uses), with a manifest of file hashes,
+# the commit they came from and the address of that commit.
+# usage: tools/vendor [--ref TAG_OR_COMMIT] <repo dir>...
+# The source is always a fresh clone of https://github.com/helv-io/agent-checks (latest main unless --ref is given), so the
+# recorded commit is one anyone can fetch. AGENT_CHECKS_SOURCE overrides the address (the tests point it at a local clone).
+set -euo pipefail
+src=${AGENT_CHECKS_SOURCE:-https://github.com/helv-io/agent-checks.git}; want=
+if [ "${1:-}" = --ref ]; then want=${2:?--ref needs a tag or commit}; shift 2; fi
+[ $# -gt 0 ] || { echo "usage: tools/vendor [--ref TAG_OR_COMMIT] <repo dir>..."; exit 2; }
+work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
+git clone -q "$src" "$work/src" || { echo "error: cannot clone $src"; exit 1; }
+[ -z "$want" ] || git -C "$work/src" checkout -q "$want"
+here=$work/src; ref=$(git -C "$here" rev-parse HEAD)
+for d in "$@"; do
+  t="$d/.agent-checks"
+  rm -rf "$t"; mkdir -p "$t/bin" "$t/checks" "$t/tools"
+  cp "$here"/bin/agent-checks "$t/bin/"; cp "$here"/checks/*.py "$t/checks/"; cp "$here"/tools/actionlint "$t/tools/"; cp "$here/VERSION" "$t/"
+  echo "$ref" > "$t/REF"; echo "$src" > "$t/SOURCE"
+  (cd "$t" && find . -type f ! -name MANIFEST -print0 | sort -z | xargs -0 sha256sum | sed 's#  \./#  #' > MANIFEST)
+  grep -qs '^/\.agent-checks/\*\* -text' "$d/.gitattributes" 2>/dev/null || echo '/.agent-checks/** -text' >> "$d/.gitattributes"
+  echo "$d <- ${ref:0:7} ($(cat "$here/VERSION")) from $src"
+done

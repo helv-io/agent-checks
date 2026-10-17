@@ -1,0 +1,4 @@
+# agent-checks checks itself.
+[docs]
+user-facing = "^(bin|checks)/"
+require = ["README.md"]

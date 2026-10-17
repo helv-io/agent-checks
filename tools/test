@@ -1,0 +1,7 @@
+#!/bin/bash
+# The one command CI and a developer both run. A skipped test is a failure.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+out=$(mktemp); trap 'rm -f "$out"' EXIT
+python3 -m unittest discover -s tests -v 2>&1 | tee "$out"
+if grep -Eq 'skipped=|\.\.\. skipped' "$out"; then echo "error: a test was skipped; skips count as failures"; exit 1; fi

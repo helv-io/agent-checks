@@ -346,7 +346,7 @@ class WorkflowPermissions(unittest.TestCase):
 
     def test_text_that_looks_like_a_key_is_not_one(self):
         text = caller("    permissions:\n      issues: write\n").replace("on:\n", "on:\n  workflow_dispatch:\n")
-        other = "name: o\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - name: x\n        run: |\n          echo 'permissions:'\n          echo 'uses: ./.github/workflows/ci.yml'\n      - uses: actions/checkout@v4\n"
+        other = "name: o\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - name: x\n        run: |\n          echo 'permissions:'\n          echo 'uses: ./.github/workflows/ci.yml'\n      - uses: actions/checkout@v7\n"
         r = Repo(); r.commit({".github/workflows/rel.yml": text, ".github/workflows/ci.yml": CALLEE, ".github/workflows/o.yml": other})
         self.assertEqual(r.run("workflow-permissions")[0], 0)
 

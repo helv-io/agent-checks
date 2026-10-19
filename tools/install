@@ -1,8 +1,8 @@
 #!/bin/bash
 # Put the shared job into a repo: the workflow plus the vendored checks.
-# usage: tools/install <repo dir> [checkout major version, default v4]
+# usage: tools/install <repo dir> [checkout major version, default v7]
 set -euo pipefail
-here="$(cd "$(dirname "$0")/.." && pwd)"; d=$1; co=${2:-v4}
+here="$(cd "$(dirname "$0")/.." && pwd)"; d=$1; co=${2:-v7}
 mkdir -p "$d/.github/workflows"
-sed "s#actions/checkout@v4#actions/checkout@$co#" "$here/templates/agent-checks.yml" > "$d/.github/workflows/agent-checks.yml"
+sed "s#actions/checkout@v7#actions/checkout@$co#" "$here/templates/agent-checks.yml" > "$d/.github/workflows/agent-checks.yml"
 "$here/tools/vendor" "$d"
